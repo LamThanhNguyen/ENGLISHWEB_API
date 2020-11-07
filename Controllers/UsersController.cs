@@ -1,85 +1,64 @@
-﻿using System;
+﻿using AutoMapper;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Claims;
 using System.Threading.Tasks;
-using AutoMapper;
-using Microsoft.AspNetCore.Mvc;
-using WEB_HOCTIENGANH.Data;
-using WEB_HOCTIENGANH.Dtos;
+using WEB_HOCTIENGANH.DTOs;
+using WEB_HOCTIENGANH.Extensions;
 using WEB_HOCTIENGANH.Helpers;
+using WEB_HOCTIENGANH.Interfaces;
 
 namespace WEB_HOCTIENGANH.Controllers
 {
-    [ServiceFilter(typeof(LogUserActivity))]
-    [Route("api/[controller]")]
-    [ApiController]
-    public class UsersController : ControllerBase
+    [Authorize]
+    public class UsersController : BaseApiController
     {
-        private readonly IDatingRepository _repo;
         private readonly IMapper _mapper;
+        private readonly IUnitOfWork _unitOfWork;
 
-        public UsersController(IDatingRepository repo, IMapper mapper)
+        public UsersController(IUnitOfWork unitOfWork, IMapper mapper)
         {
-            // Chúng ta chỉ Dependency Injection IDatingRepository mà không Dependency Injection DataContext bởi vì chúng ta đã làm điều đó trong DatingRepository
-            _repo = repo;
+            _unitOfWork = unitOfWork;
             _mapper = mapper;
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetUsers([FromQuery]UserParams userParams)
+        public async Task<ActionResult<IEnumerable<MemberDto>>> GetUsers([FromQuery] UserParams userParams)
         {
-            // int.Parse = Chuyển đổi một chuỗi dạng số sang một số chính thức.
-            var currentUserId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier).Value);
+            userParams.CurrentUsername = User.GetUsername();
 
+            var users = await _unitOfWork.UserRepository.GetMembersAsync(userParams);
 
-            // Trả về User hiện tại.
-            var userFromRepo = await _repo.GetUser(currentUserId);
+            Response.AddPaginationHeader(users.CurrentPage, users.PageSize,
+                users.TotalCount, users.TotalPages);
 
-            userParams.UserId = currentUserId;
-
-
-            // Trả về các Users trong DB ngoại trừ User hiện tại.
-            var users = await _repo.GetUsers(userParams);
-
-            var usersToReturn = _mapper.Map<IEnumerable<UserForListDto>>(users);
-
-            Response.AddPagination(users.CurrentPage, users.PageSize, users.TotalCount, users.TotalPages);
-
-            return Ok(usersToReturn);
+            return Ok(users);
         }
 
 
-        [HttpGet("{id}", Name = "GetUser")]
-        public async Task<IActionResult> GetUser(int id)
+        [HttpGet("{username}", Name = "GetUser")]
+        public async Task<ActionResult<MemberDto>> GetUser(string username)
         {
-            var user = await _repo.GetUser(id);
-
-            var userToReturn = _mapper.Map<UserForDetailedDto>(user);
-
-            return Ok(userToReturn);
+            return await _unitOfWork.UserRepository.GetMemberAsync(username);
         }
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateUser(int id, UserForUpdateDto userForUpdateDto)
+        [HttpPut]
+        public async Task<ActionResult> UpdateUser(MemberUpdateDto memberUpdateDto)
         {
-            if (id != int.Parse(User.FindFirst(ClaimTypes.NameIdentifier).Value))
-            {
-                return Unauthorized();
-            }
+            var user = await _unitOfWork.UserRepository.GetUserByUsernameAsync(User.GetUsername());
 
-            var userFromRepo = await _repo.GetUser(id);
+            _mapper.Map(memberUpdateDto, user);
 
-            _mapper.Map(userForUpdateDto, userFromRepo);
+            _unitOfWork.UserRepository.Update(user);
 
-            if (await _repo.SaveAll())
+            if (await _unitOfWork.Complete())
             {
                 return NoContent();
             }
 
-            throw new Exception($"Updating user {id} failed on save");
+            return BadRequest("Failed to update user");
         }
-
-
     }
 }

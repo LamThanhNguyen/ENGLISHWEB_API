@@ -1,38 +1,81 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using System;
+using WEB_HOCTIENGANH.Entities;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using WEB_HOCTIENGANH.Models;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace WEB_HOCTIENGANH.Data
 {
-    public class DataContext : IdentityDbContext<User, Role, int, IdentityUserClaim<int>, UserRole, IdentityUserLogin<int>, IdentityRoleClaim<int>, IdentityUserToken<int>>
+    public class DataContext : IdentityDbContext<AppUser, AppRole, int,
+        IdentityUserClaim<int>, AppUserRole, IdentityUserLogin<int>,
+        IdentityRoleClaim<int>, IdentityUserToken<int>>
     {
-        public DataContext(DbContextOptions<DataContext> options): base(options) { }
+        public DataContext(DbContextOptions options) : base(options)
+        {
 
+        }
+
+        public DbSet<Vocabulary> Vocabularies { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
-            // Gọi Method của cha
             base.OnModelCreating(builder);
 
-            builder.Entity<UserRole>(userRole =>
+            builder.Entity<AppUser>()
+                .HasMany(ur => ur.UserRoles)
+                .WithOne(u => u.User)
+                .HasForeignKey(ur => ur.UserId)
+                .IsRequired();
+
+            builder.Entity<AppRole>()
+                .HasMany(ur => ur.UserRoles)
+                .WithOne(u => u.Role)
+                .HasForeignKey(ur => ur.RoleId)
+                .IsRequired();
+
+            builder.ApplyUtcDateTimeConverter();
+        }
+    }
+
+    public static class UtcDateAnnotation
+    {
+        private const String IsUtcAnnotation = "IsUtc";
+        private static readonly ValueConverter<DateTime, DateTime> UtcConverter = 
+            new ValueConverter<DateTime, DateTime>(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+        private static readonly ValueConverter<DateTime?, DateTime?> UtcNullableConverter =
+            new ValueConverter<DateTime?, DateTime?>(v => v, v => v == null ? v : DateTime.SpecifyKind(v.Value, DateTimeKind.Utc));
+
+        public static PropertyBuilder<TProperty> IsUtc<TProperty>(this PropertyBuilder<TProperty> builder, Boolean isUtc = true) =>
+            builder.HasAnnotation(IsUtcAnnotation, isUtc);
+
+        public static Boolean IsUtc(this IMutableProperty property) =>
+            ((Boolean?)property.FindAnnotation(IsUtcAnnotation)?.Value) ?? true;
+
+        public static void ApplyUtcDateTimeConverter(this ModelBuilder builder)
+        {
+            foreach (var entityType in builder.Model.GetEntityTypes())
             {
-                userRole.HasKey(ur => new { ur.UserId, ur.RoleId });
+                foreach (var property in entityType.GetProperties())
+                {
+                    if (!property.IsUtc())
+                    {
+                        continue;
+                    }
 
-                userRole.HasOne(ur => ur.Role)
-                    .WithMany(r => r.UserRoles)
-                    .HasForeignKey(ur => ur.RoleId)
-                    .IsRequired();
+                    if (property.ClrType == typeof(DateTime))
+                    {
+                        property.SetValueConverter(UtcConverter);
+                    }
 
-                userRole.HasOne(ur => ur.User)
-                    .WithMany(r => r.UserRoles)
-                    .HasForeignKey(ur => ur.UserId)
-                    .IsRequired();
-            });
+                    if (property.ClrType == typeof(DateTime))
+                    {
+                        property.SetValueConverter(UtcNullableConverter);
+                    }
+                }
+            }
         }
     }
 }
